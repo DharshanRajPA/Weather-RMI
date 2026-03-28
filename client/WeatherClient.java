@@ -8,7 +8,9 @@ public class WeatherClient {
 
     public static void main(String[] args) {
         try {
-            Registry registry = LocateRegistry.getRegistry("localhost", 1099);
+            String host = System.getProperty("weather.host", "localhost");
+            int port = Integer.getInteger("weather.port", 1099);
+            Registry registry = LocateRegistry.getRegistry(host, port);
             WeatherService service = (WeatherService) registry.lookup("WeatherService");
 
             if (args.length > 0) {
@@ -21,13 +23,14 @@ public class WeatherClient {
                     double temp = extractDouble(json, "temperature");
                     double hum = extractDouble(json, "humidity");
                     System.out.println("Location: " + loc);
-                    System.out.println("Temperature: " + temp + " °C");
+                    System.out.println("Temperature: " + temp + " C");
                     System.out.println("Humidity: " + hum + " %");
                 }
             } else {
                 String json = service.getAllWeather();
                 System.out.println("All Weather JSON: " + json);
                 System.out.println("Hint: run with a location argument to see parsed output, e.g. 'java client.WeatherClient Pune'");
+                System.out.println("Optional remote host/port: java -Dweather.host=<host> -Dweather.port=<port> client.WeatherClient Pune");
             }
         } catch (Exception e) {
             e.printStackTrace();

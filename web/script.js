@@ -10,6 +10,7 @@ const els = sel => Array.from(document.querySelectorAll(sel));
 
 function toF(c) { return ((c * 9/5) + 32).toFixed(1); }
 function formatTemp(t) { return currentUnit === 'F' ? toF(t) + ' °F' : t + ' °C'; }
+function asTempValue(t) { return currentUnit === 'F' ? Number(toF(t)) : Number(t); }
 
 function getTempClass(t) {
   if (t > 30) return 'temp-hot';
@@ -49,13 +50,28 @@ async function updateComparison() {
         fetch(`/api/history?location=${encodeURIComponent(c2)}&limit=15`)
       ]);
       const [h1, h2] = await Promise.all([r1.json(), r2.json()]);
+      if (!Array.isArray(h1) || !Array.isArray(h2)) return;
       
-      const labels = h1.length > h2.length ? h1 : h2;
-      compChart.data.labels = labels.map(h => new Date(h.timestamp).toLocaleTimeString([], {second:'2-digit'}));
+      const t1 = h1.map(h => Number(h.timestamp)).filter(Number.isFinite);
+      const t2 = h2.map(h => Number(h.timestamp)).filter(Number.isFinite);
+      const timeline = Array.from(new Set([...t1, ...t2])).sort((a, b) => a - b);
+      compChart.data.labels = timeline.map(ts => new Date(ts).toLocaleTimeString([], { second: '2-digit' }));
+
+      const series1 = new Map(
+        h1
+          .filter(h => Number.isFinite(Number(h.timestamp)))
+          .map(h => [Number(h.timestamp), asTempValue(h.temperature)])
+      );
+      const series2 = new Map(
+        h2
+          .filter(h => Number.isFinite(Number(h.timestamp)))
+          .map(h => [Number(h.timestamp), asTempValue(h.temperature)])
+      );
+
       compChart.data.datasets[0].label = c1;
-      compChart.data.datasets[0].data = h1.map(h => currentUnit === 'F' ? toF(h.temperature) : h.temperature);
+      compChart.data.datasets[0].data = timeline.map(ts => (series1.has(ts) ? series1.get(ts) : null));
       compChart.data.datasets[1].label = c2;
-      compChart.data.datasets[1].data = h2.map(h => currentUnit === 'F' ? toF(h.temperature) : h.temperature);
+      compChart.data.datasets[1].data = timeline.map(ts => (series2.has(ts) ? series2.get(ts) : null));
       compChart.update('none');
     } catch (e) { console.error('Comp history failed', e); }
   }
@@ -141,7 +157,12 @@ function populateSelects() {
 async function fetchAll() {
   try {
     const res = await fetch('/api/weather');
-    allData = await res.json();
+    const payload = await res.json();
+    if (!res.ok || !Array.isArray(payload)) {
+      const msg = payload?.message || 'Failed to fetch weather data';
+      throw new Error(msg);
+    }
+    allData = payload;
     renderNodeMenu(allData.filter(d => d.location.toLowerCase().includes(el('#filterInput').value.toLowerCase())));
     populateSelects();
     updateSummary();
@@ -151,7 +172,8 @@ async function fetchAll() {
     const activeLoc = el('#querySelect').value;
     if (activeLoc) fetchLocation(activeLoc);
   } catch (e) {
-    console.error('Sync failed');
+    console.error('Sync failed', e);
+    showToast('Live sync failed', 'error');
   }
 }
 
@@ -208,6 +230,9 @@ async function submitUpdate(ev) {
       showToast(`Broadcast to ${loc} successful`);
       el('#updateForm').reset();
       await fetchAll();
+    } else {
+      const body = await res.json().catch(() => ({}));
+      showToast(body?.message || 'Broadcast failed', 'error');
     }
   } catch (e) { showToast('Broadcast failed', 'error'); }
   finally {
@@ -235,11 +260,12 @@ async function renderHistory(location) {
   try {
     const res = await fetch(`/api/history?location=${encodeURIComponent(location)}&limit=15`);
     const hist = await res.json();
+    if (!Array.isArray(hist)) return;
     const labels = hist.map(h => new Date(h.timestamp).toLocaleTimeString([], {second:'2-digit'}));
     
     // Replace instead of push to prevent growth
     tempChart.data.labels = labels;
-    tempChart.data.datasets[0].data = hist.map(h => currentUnit === 'F' ? toF(h.temperature) : h.temperature);
+    tempChart.data.datasets[0].data = hist.map(h => asTempValue(h.temperature));
     
     humChart.data.labels = labels;
     humChart.data.datasets[0].data = hist.map(h => h.humidity);

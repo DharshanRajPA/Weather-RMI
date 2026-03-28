@@ -12,14 +12,19 @@ import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 public class WeatherServer {
 
     public static void main(String[] args) {
+        int rmiPort = Integer.getInteger("weather.rmi.port", 1099);
+        int httpPort = Integer.getInteger("weather.http.port", 8080);
         try {
-            WeatherService service = new WeatherServiceImpl();
+            WeatherServiceImpl service = new WeatherServiceImpl();
 
             // Prepopulate sample weather data on the central server
             service.updateWeather("Pune", 31, 65);
@@ -43,11 +48,16 @@ public class WeatherServer {
             service.updateWeather("Madrid", 23, 50);
             service.updateWeather("Moscow", 5, 82);
 
-            Registry registry = LocateRegistry.createRegistry(1099);
+            Registry registry;
+            try {
+                registry = LocateRegistry.createRegistry(rmiPort);
+            } catch (java.rmi.server.ExportException alreadyRunning) {
+                registry = LocateRegistry.getRegistry(rmiPort);
+            }
             registry.rebind("WeatherService", service);
 
             // Start embedded HTTP server for frontend integration
-            HttpServer http = HttpServer.create(new InetSocketAddress(8080), 0);
+            HttpServer http = HttpServer.create(new InetSocketAddress(httpPort), 0);
             http.createContext("/api/weather", new ApiWeatherHandler(service));
             http.createContext("/api/history", new ApiHistoryHandler(service));
             http.createContext("/api/summary", new ApiSummaryHandler(service));
@@ -57,37 +67,32 @@ public class WeatherServer {
             http.setExecutor(null);
             http.start();
 
-            System.out.println("Weather RMI Server started on RMI:1099 and HTTP:8080...");
+            System.out.println("Weather RMI Server started on RMI:" + rmiPort + " and HTTP:" + httpPort + "...");
+            System.out.println("Frontend URL: http://localhost:" + httpPort + "/");
 
             // Start background simulation thread to jitter weather data
-            new Thread(() -> {
+            Thread simulator = new Thread(() -> {
                 java.util.Random rnd = new java.util.Random();
                 while (true) {
                     try {
                         Thread.sleep(3000);
-                        String allJson = service.getAllWeather();
-                        // Minimal JSON array parser for simulation purposes
-                        if (allJson.startsWith("[") && allJson.endsWith("]")) {
-                            String inner = allJson.substring(1, allJson.length() - 1);
-                            if (inner.isEmpty()) continue;
-                            for (String obj : inner.split("\\},\\{")) {
-                                Map<String, String> fields = extractJsonFields("{" + obj.replace("{", "").replace("}", "") + "}");
-                                String loc = fields.get("location");
-                                Double t = parseDouble(fields.get("temperature"));
-                                Double h = parseDouble(fields.get("humidity"));
-                                if (loc != null && t != null && h != null) {
-                                    // Jitter temperature by ±0.5 and humidity by ±1
-                                    double newT = Math.round((t + (rnd.nextDouble() - 0.5)) * 10.0) / 10.0;
-                                    double newH = Math.max(0, Math.min(100, Math.round(h + (rnd.nextInt(3) - 1))));
-                                    service.updateWeather(loc, newT, newH);
-                                }
-                            }
+                        List<WeatherServiceImpl.WeatherRecordSnapshot> snapshot = service.getSnapshot();
+                        for (WeatherServiceImpl.WeatherRecordSnapshot node : snapshot) {
+                            // Jitter temperature by ±0.5 and humidity by ±1
+                            double newT = Math.round((node.temperature + (rnd.nextDouble() - 0.5)) * 10.0) / 10.0;
+                            double newH = Math.max(0, Math.min(100, Math.round(node.humidity + (rnd.nextInt(3) - 1))));
+                            service.updateWeather(node.location, newT, newH);
                         }
                     } catch (Exception e) {
                         System.err.println("Simulation error: " + e.getMessage());
                     }
                 }
-            }).start();
+            }, "weather-simulator");
+            simulator.setDaemon(true);
+            simulator.start();
+        } catch (java.net.BindException be) {
+            System.err.println("Port bind failed: " + be.getMessage());
+            System.err.println("Tip: use custom ports, e.g. java -Dweather.http.port=8081 -Dweather.rmi.port=1100 server.WeatherServer");
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -168,7 +173,7 @@ public class WeatherServer {
                     String loc = fields.get("location");
                     Double temp = parseDouble(fields.get("temperature"));
                     Double hum = parseDouble(fields.get("humidity"));
-                    if (loc == null || temp == null || hum == null) {
+                    if (loc == null || loc.trim().isEmpty() || temp == null || hum == null) {
                         send(exchange, 400, jsonError("bad_request", "Expected JSON with location, temperature, humidity"));
                         return;
                     }
@@ -263,14 +268,14 @@ public class WeatherServer {
         try { return Double.parseDouble(s); } catch (NumberFormatException e) { return null; }
     }
 
-    // Very small JSON extractor for flat objects {"k":"v","n":1}
+    // Small JSON extractor for flat objects {"k":"v","n":1} with quoted-commas support.
     private static Map<String, String> extractJsonFields(String json) {
         Map<String, String> map = new LinkedHashMap<>();
         if (json == null) return map;
         String trimmed = json.trim();
         if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return map;
         String inner = trimmed.substring(1, trimmed.length() - 1);
-        for (String pair : inner.split(",")) {
+        for (String pair : splitTopLevel(inner)) {
             int colon = pair.indexOf(':');
             if (colon < 0) continue;
             String k = stripQuotes(pair.substring(0, colon).trim());
@@ -283,8 +288,69 @@ public class WeatherServer {
 
     private static String stripQuotes(String s) {
         String t = s.trim();
-        if (t.startsWith("\"") && t.endsWith("\"")) return t.substring(1, t.length() - 1);
+        if (t.startsWith("\"") && t.endsWith("\"")) return unescapeJsonString(t.substring(1, t.length() - 1));
         return t;
+    }
+
+    private static String unescapeJsonString(String s) {
+        StringBuilder out = new StringBuilder(s.length());
+        boolean escaped = false;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (escaped) {
+                switch (c) {
+                    case 'n': out.append('\n'); break;
+                    case 'r': out.append('\r'); break;
+                    case 't': out.append('\t'); break;
+                    case '"':
+                    case '\\':
+                    case '/': out.append(c); break;
+                    default: out.append(c); break;
+                }
+                escaped = false;
+            } else if (c == '\\') {
+                escaped = true;
+            } else {
+                out.append(c);
+            }
+        }
+        if (escaped) out.append('\\');
+        return out.toString();
+    }
+
+    private static java.util.List<String> splitTopLevel(String input) {
+        java.util.List<String> parts = new java.util.ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean inString = false;
+        boolean escaped = false;
+        for (int i = 0; i < input.length(); i++) {
+            char c = input.charAt(i);
+            if (escaped) {
+                current.append(c);
+                escaped = false;
+                continue;
+            }
+            if (c == '\\') {
+                current.append(c);
+                escaped = true;
+                continue;
+            }
+            if (c == '"') {
+                inString = !inString;
+                current.append(c);
+                continue;
+            }
+            if (c == ',' && !inString) {
+                parts.add(current.toString());
+                current.setLength(0);
+                continue;
+            }
+            current.append(c);
+        }
+        if (!current.isEmpty()) {
+            parts.add(current.toString());
+        }
+        return parts;
     }
 
     private static String contentType(String path) {
@@ -296,9 +362,25 @@ public class WeatherServer {
 
     // Small file utility
     static class FilesUtil {
+        private static final Path WORKDIR = Paths.get(System.getProperty("user.dir")).toAbsolutePath();
+
         static byte[] readFile(String relPath) throws IOException {
-            java.nio.file.Path p = java.nio.file.Paths.get(relPath);
-            return java.nio.file.Files.readAllBytes(p);
+            Path requested = Paths.get(relPath).normalize();
+            Path fromWorkdir = WORKDIR.resolve(requested).normalize();
+            if (java.nio.file.Files.exists(fromWorkdir)) {
+                return java.nio.file.Files.readAllBytes(fromWorkdir);
+            }
+            Path fromRepoRoot = WORKDIR.resolve("Weather-RMI").resolve(requested).normalize();
+            if (java.nio.file.Files.exists(fromRepoRoot)) {
+                return java.nio.file.Files.readAllBytes(fromRepoRoot);
+            }
+            java.net.URL resource = WeatherServer.class.getClassLoader().getResource(relPath.replace("\\", "/"));
+            if (resource != null) {
+                try (InputStream is = resource.openStream()) {
+                    return readAll(is);
+                }
+            }
+            throw new IOException("Missing file: " + relPath);
         }
     }
 }

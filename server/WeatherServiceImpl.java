@@ -23,22 +23,23 @@ public class WeatherServiceImpl extends UnicastRemoteObject implements WeatherSe
 
     @Override
     public synchronized void updateWeather(String location, double temperature, double humidity) throws RemoteException {
-        if (location == null || location.isEmpty()) {
+        if (location == null || location.trim().isEmpty()) {
             throw new RemoteException("location must not be empty");
         }
-        WeatherRecord rec = new WeatherRecord(temperature, humidity, System.currentTimeMillis());
-        store.put(location, rec);
-        Deque<WeatherRecord> dq = history.computeIfAbsent(location, k -> new ArrayDeque<>());
+        String normalizedLocation = location.trim();
+        WeatherRecord rec = new WeatherRecord(normalizedLocation, temperature, humidity, System.currentTimeMillis());
+        store.put(normalizedLocation, rec);
+        Deque<WeatherRecord> dq = history.computeIfAbsent(normalizedLocation, k -> new ArrayDeque<>());
         dq.addLast(rec);
         while (dq.size() > MAX_HISTORY) dq.removeFirst();
     }
 
     @Override
     public synchronized String getHistory(String location, int limit) throws RemoteException {
-        if (location == null || location.isEmpty()) {
+        if (location == null || location.trim().isEmpty()) {
             return jsonError("invalid_location", "Location must not be empty");
         }
-        Deque<WeatherRecord> dq = history.get(location);
+        Deque<WeatherRecord> dq = history.get(location.trim());
         if (dq == null || dq.isEmpty()) {
             return "[]";
         }
@@ -49,6 +50,7 @@ public class WeatherServiceImpl extends UnicastRemoteObject implements WeatherSe
         for (int i = start; i < list.size(); i++) {
             WeatherRecord r = list.get(i);
             joiner.add("{" +
+                "\"location\":" + quote(r.location) + "," +
                 "\"timestamp\":" + r.timestamp + "," +
                 "\"temperature\":" + fmt(r.temperature) + "," +
                 "\"humidity\":" + fmt(r.humidity) +
@@ -82,23 +84,34 @@ public class WeatherServiceImpl extends UnicastRemoteObject implements WeatherSe
     }
     @Override
     public synchronized String getWeather(String location) throws RemoteException {
-        if (location == null || location.isEmpty()) {
+        if (location == null || location.trim().isEmpty()) {
             return jsonError("invalid_location", "Location must not be empty");
         }
-        WeatherRecord record = store.get(location);
+        String normalizedLocation = location.trim();
+        WeatherRecord record = store.get(normalizedLocation);
         if (record == null) {
-            return jsonError("not_found", "No weather for location: " + location);
+            return jsonError("not_found", "No weather for location: " + normalizedLocation);
         }
-        return record.toJson(location);
+        return record.toJson();
     }
 
     @Override
     public synchronized String getAllWeather() throws RemoteException {
         StringJoiner joiner = new StringJoiner(",", "[", "]");
         for (Map.Entry<String, WeatherRecord> e : store.entrySet()) {
-            joiner.add(e.getValue().toJson(e.getKey()));
+            joiner.add(e.getValue().toJson());
         }
         return joiner.toString();
+    }
+
+    synchronized List<WeatherRecordSnapshot> getSnapshot() {
+        List<WeatherRecordSnapshot> snapshot = new ArrayList<>(store.size());
+        for (WeatherRecord record : store.values()) {
+            snapshot.add(new WeatherRecordSnapshot(
+                record.location, record.temperature, record.humidity, record.timestamp
+            ));
+        }
+        return snapshot;
     }
 
     private static String jsonError(String code, String message) {
@@ -113,6 +126,7 @@ public class WeatherServiceImpl extends UnicastRemoteObject implements WeatherSe
     }
 
     private static String escape(String s) {
+        if (s == null) return "";
         return s.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
@@ -125,23 +139,39 @@ public class WeatherServiceImpl extends UnicastRemoteObject implements WeatherSe
     }
 
     private static class WeatherRecord {
+        private final String location;
         private final double temperature;
         private final double humidity;
         private final long timestamp;
 
-        WeatherRecord(double temperature, double humidity, long timestamp) {
+        WeatherRecord(String location, double temperature, double humidity, long timestamp) {
+            this.location = location;
             this.temperature = temperature;
             this.humidity = humidity;
             this.timestamp = timestamp;
         }
 
-        String toJson(String location) {
+        String toJson() {
             return "{" +
                 "\"location\":" + quote(location) + "," +
                 "\"temperature\":" + fmt(temperature) + "," +
                 "\"humidity\":" + fmt(humidity) + "," +
                 "\"timestamp\":" + timestamp +
                 "}";
+        }
+    }
+
+    static class WeatherRecordSnapshot {
+        final String location;
+        final double temperature;
+        final double humidity;
+        final long timestamp;
+
+        WeatherRecordSnapshot(String location, double temperature, double humidity, long timestamp) {
+            this.location = location;
+            this.temperature = temperature;
+            this.humidity = humidity;
+            this.timestamp = timestamp;
         }
     }
 }
