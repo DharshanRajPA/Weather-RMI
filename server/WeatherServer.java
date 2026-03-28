@@ -25,6 +25,23 @@ public class WeatherServer {
             service.updateWeather("Pune", 31, 65);
             service.updateWeather("Mumbai", 29, 70);
             service.updateWeather("Delhi", 12, 50);
+            service.updateWeather("London", 14, 75);
+            service.updateWeather("New York", 18, 55);
+            service.updateWeather("Tokyo", 22, 60);
+            service.updateWeather("Paris", 16, 68);
+            service.updateWeather("Berlin", 13, 72);
+            service.updateWeather("Sydney", 24, 62);
+            service.updateWeather("Singapore", 30, 85);
+            service.updateWeather("Dubai", 38, 40);
+            service.updateWeather("Rome", 20, 58);
+            service.updateWeather("Amsterdam", 11, 80);
+            service.updateWeather("Toronto", 15, 52);
+            service.updateWeather("San Francisco", 19, 64);
+            service.updateWeather("Bangkok", 34, 78);
+            service.updateWeather("Seoul", 21, 59);
+            service.updateWeather("Cairo", 32, 45);
+            service.updateWeather("Madrid", 23, 50);
+            service.updateWeather("Moscow", 5, 82);
 
             Registry registry = LocateRegistry.createRegistry(1099);
             registry.rebind("WeatherService", service);
@@ -41,6 +58,36 @@ public class WeatherServer {
             http.start();
 
             System.out.println("Weather RMI Server started on RMI:1099 and HTTP:8080...");
+
+            // Start background simulation thread to jitter weather data
+            new Thread(() -> {
+                java.util.Random rnd = new java.util.Random();
+                while (true) {
+                    try {
+                        Thread.sleep(3000);
+                        String allJson = service.getAllWeather();
+                        // Minimal JSON array parser for simulation purposes
+                        if (allJson.startsWith("[") && allJson.endsWith("]")) {
+                            String inner = allJson.substring(1, allJson.length() - 1);
+                            if (inner.isEmpty()) continue;
+                            for (String obj : inner.split("\\},\\{")) {
+                                Map<String, String> fields = extractJsonFields("{" + obj.replace("{", "").replace("}", "") + "}");
+                                String loc = fields.get("location");
+                                Double t = parseDouble(fields.get("temperature"));
+                                Double h = parseDouble(fields.get("humidity"));
+                                if (loc != null && t != null && h != null) {
+                                    // Jitter temperature by ±0.5 and humidity by ±1
+                                    double newT = Math.round((t + (rnd.nextDouble() - 0.5)) * 10.0) / 10.0;
+                                    double newH = Math.max(0, Math.min(100, Math.round(h + (rnd.nextInt(3) - 1))));
+                                    service.updateWeather(loc, newT, newH);
+                                }
+                            }
+                        }
+                    } catch (Exception e) {
+                        System.err.println("Simulation error: " + e.getMessage());
+                    }
+                }
+            }).start();
         } catch (Exception e) {
             e.printStackTrace();
         }

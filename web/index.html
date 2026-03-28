@@ -12,103 +12,166 @@
   <header class="appbar">
     <div class="container appbar-inner">
       <div class="brand">
-        <div class="logo">☁️</div>
+        <div class="logo">⚡</div>
         <div>
-          <h1>Weather Information Service</h1>
-          <p>Java RMI backend • JSON API • Web UI</p>
+          <h1>WeatherFlow</h1>
+          <p>Distributed RMI • Real-time Monitoring</p>
         </div>
       </div>
       <div class="toolbar">
-        <label class="switch"><input type="checkbox" id="autoRefresh"/><span>Auto refresh</span></label>
-        <button id="refreshAll" class="secondary">Refresh</button>
+        <div class="unit-toggle">
+          <button id="unitC" class="active">°C</button>
+          <button id="unitF">°F</button>
+        </div>
       </div>
     </div>
   </header>
 
   <main class="container">
-    <section class="panel">
+    <section class="panel panel-indigo">
       <div class="panel-header">
-        <h2>All Locations</h2>
-        <div class="row">
-          <input id="filterInput" class="grow" placeholder="Filter by location" />
+        <h2>🌍 Network Hub</h2>
+        <div class="row" style="margin-left: auto;">
+          <input id="filterInput" placeholder="Filter nodes..." style="padding: 8px 16px; font-size: 13px;" />
         </div>
       </div>
-      <div id="tableWrap" class="table-wrap loading">
-        <table id="allTable">
-          <thead>
-            <tr><th>Location</th><th>Temperature (°C)</th><th>Humidity (%)</th><th>Updated</th></tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-        <div class="loader">Loading data…</div>
-        <div class="empty hidden">No data available</div>
+      
+      <div id="nodeMenu" class="node-menu">
+        <!-- Node pills will be injected here -->
+      </div>
+      <div id="menuLoader" class="loader" style="position: relative; height: 60px; display: flex; align-items: center; justify-content: center; background: transparent;">
+        Syncing network...
       </div>
     </section>
 
-    <section class="panel">
+    <section class="panel panel-rose">
       <div class="panel-header">
-        <h2>Query Location</h2>
+        <h2>📊 Network Analytics & Trends</h2>
       </div>
-      <div class="row">
-        <select id="querySelect" class="grow"></select>
-        <input id="queryLocation" placeholder="or type a location" />
-        <button id="fetchLocation">Fetch</button>
-      </div>
-      <div id="locationResult" class="card muted">Select a location to view details.</div>
-    </section>
-
-    <section class="panel">
-      <div class="panel-header">
-        <h2>Analytics</h2>
-      </div>
-      <div class="stats">
-        <div class="card stat">
-          <div class="label">Total Locations</div>
+      <div class="stats" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 32px; gap: 24px;">
+        <div class="stat">
+          <div class="label">Total Nodes</div>
           <div id="statTotal" class="value">—</div>
         </div>
-        <div class="card stat">
-          <div class="label">Avg Temperature (°C)</div>
+        <div class="stat">
+          <div class="label">Thermal Peak</div>
+          <div id="statPeak" class="value">—</div>
+        </div>
+        <div class="stat">
+          <div class="label">Avg Network Temp</div>
           <div id="statAvgT" class="value">—</div>
         </div>
-        <div class="card stat">
-          <div class="label">Avg Humidity (%)</div>
+        <div class="stat">
+          <div class="label">Avg Network Hum</div>
           <div id="statAvgH" class="value">—</div>
-        </div>
-        <div class="card stat">
-          <div class="label">Latest Update</div>
-          <div id="statLatest" class="value">—</div>
         </div>
       </div>
       <div class="charts">
         <div class="chart">
-          <h3>Temperature Trend</h3>
-          <canvas id="tempChart" height="130"></canvas>
+          <h4 style="margin:0 0 12px 0; font-size:12px; color:var(--muted); text-transform:uppercase;">Temperature History</h4>
+          <canvas id="tempChart" height="200"></canvas>
         </div>
         <div class="chart">
-          <h3>Humidity Trend</h3>
-          <canvas id="humChart" height="130"></canvas>
+          <h4 style="margin:0 0 12px 0; font-size:12px; color:var(--muted); text-transform:uppercase;">Humidity History</h4>
+          <canvas id="humChart" height="200"></canvas>
         </div>
       </div>
-      <small class="muted">Charts show history for selected location where available.</small>
     </section>
 
-    <section class="panel">
+    <section class="panel panel-cyan">
       <div class="panel-header">
-        <h2>Add / Update Weather</h2>
+        <h2>⚖️ Network Comparison Engine</h2>
       </div>
-      <form id="updateForm" class="grid" novalidate>
-        <input id="upLocation" placeholder="Location" required />
-        <input id="upTemp" type="number" step="0.1" placeholder="Temperature (°C)" required />
-        <input id="upHum" type="number" step="0.1" placeholder="Humidity (%)" required />
-        <button id="submitUpdate" type="submit">Submit</button>
-      </form>
-      <div id="updateStatus" class="status"></div>
+      <div class="row" style="margin-bottom: 32px; gap: 24px;">
+        <select id="comp1" class="grow"></select>
+        <div style="display: grid; place-items: center; color: var(--muted); font-weight: 800; font-size: 12px; text-transform: uppercase;">vs</div>
+        <select id="comp2" class="grow"></select>
+      </div>
+
+      <div id="compResult" style="display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin-bottom: 32px;">
+        <div class="stat neon-cyan" style="background: rgba(6, 182, 212, 0.05); border-color: rgba(6, 182, 212, 0.2); padding: 24px;">
+          <div class="label" id="compName1">Node Alpha</div>
+          <div class="value" id="compVal1">--</div>
+        </div>
+        <div class="stat neon-rose" style="background: rgba(244, 63, 94, 0.05); border-color: rgba(244, 63, 94, 0.2); padding: 24px;">
+          <div class="label" id="compName2">Node Beta</div>
+          <div class="value" id="compVal2">--</div>
+        </div>
+      </div>
+
+      <div class="chart neon-indigo" style="height: 300px;">
+        <h4 style="margin: 0 0 16px 0; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px;">Live Differential Telemetry</h4>
+        <canvas id="compChart"></canvas>
+      </div>
     </section>
+
+    <section class="panel panel-amber">
+      <div class="panel-header">
+        <h2>🔍 Node Inspector</h2>
+      </div>
+      <div style="display: flex; gap: 12px; margin-bottom: 24px;">
+        <select id="querySelect" class="grow"></select>
+        <button id="fetchLocation" style="min-width: 120px;">Inspect Node</button>
+      </div>
+      
+      <div id="locationResult" class="card neon-cyan" style="min-height: 100px; display: grid; place-items: center; background: rgba(0,0,0,0.2); border-radius: 24px;">
+        Select a node above or from the Hub to begin inspection.
+      </div>
+      
+      <div id="forecastSection" class="hidden" style="margin-top: 32px; border-top: 1px solid var(--border); padding-top: 32px;">
+        <h4 style="margin: 0 0 20px 0; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 2px; text-align: center;">Advanced Telemetry Projections</h4>
+        <div class="forecast-grid" style="grid-template-columns: repeat(3, 1fr); gap: 20px;">
+          <div class="forecast-item neon-indigo">
+            <div class="day">+4h Flow</div>
+            <div class="icon">⛅</div>
+            <div class="temp" id="fore1">--</div>
+          </div>
+          <div class="forecast-item neon-indigo">
+            <div class="day">+8h Flow</div>
+            <div class="icon">☁️</div>
+            <div class="temp" id="fore2">--</div>
+          </div>
+          <div class="forecast-item neon-indigo">
+            <div class="day">+12h Flow</div>
+            <div class="icon">🌧️</div>
+            <div class="temp" id="fore3">--</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel panel-emerald">
+      <div class="panel-header">
+        <h2>➕ Broadcast Command</h2>
+      </div>
+      <p style="color: var(--muted); font-size: 14px; margin-bottom: 24px;">Deploy new telemetry packets to any node in the distributed network.</p>
+      <form id="updateForm" novalidate style="display: flex; flex-direction: column; gap: 20px;">
+        <div class="row">
+          <select id="upLocation" class="grow" required></select>
+        </div>
+        <div style="display: flex; gap: 20px;">
+          <div class="grow">
+            <label style="display:block; font-size:11px; color:var(--muted); margin-bottom:10px; text-transform:uppercase; letter-spacing: 1px;">Target Temperature</label>
+            <input id="upTemp" type="number" step="0.1" placeholder="°C" style="width: 100%;" required />
+          </div>
+          <div class="grow">
+            <label style="display:block; font-size:11px; color:var(--muted); margin-bottom:10px; text-transform:uppercase; letter-spacing: 1px;">Target Humidity</label>
+            <input id="upHum" type="number" step="0.1" placeholder="%" style="width: 100%;" required />
+          </div>
+        </div>
+        <button id="submitUpdate" type="submit" style="width: 100%; height: 60px; font-size: 16px; letter-spacing: 1px;">INITIALIZE BROADCAST</button>
+      </form>
+    </section>
+
+    <div style="display: flex; gap: 24px; justify-content: center; padding: 20px 0;">
+      <button id="exportBtn" class="secondary" style="padding: 14px 40px;">📥 Export Network Snapshot</button>
+    </div>
   </main>
 
-  <footer>
+  <footer style="margin-top: 80px; padding-bottom: 60px; text-align: center;">
     <div class="container">
-      <small>WeatherRMI • Professional UI • v1.0</small>
+      <div style="height: 1px; background: linear-gradient(to right, transparent, var(--border), transparent); margin-bottom: 32px;"></div>
+      <p style="color: var(--muted); font-size: 13px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase;">WeatherFlow Distributed RMI System • Enterprise Edition v1.2</p>
     </div>
   </footer>
 

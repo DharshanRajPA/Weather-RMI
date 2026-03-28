@@ -1,240 +1,351 @@
 let allData = [];
 let autoRefreshTimer = null;
-let tempChart, humChart;
+let tempChart, humChart, compChart;
+let currentUnit = 'C';
 
 const el = sel => document.querySelector(sel);
 const els = sel => Array.from(document.querySelectorAll(sel));
 
+// --- Core Logic ---
+
+function toF(c) { return ((c * 9/5) + 32).toFixed(1); }
+function formatTemp(t) { return currentUnit === 'F' ? toF(t) + ' °F' : t + ' °C'; }
+
+function getTempClass(t) {
+  if (t > 30) return 'temp-hot';
+  if (t > 15) return 'temp-mild';
+  return 'temp-cool';
+}
+
 function showToast(msg, type = 'success') {
   const t = el('#toast');
-  t.textContent = msg;
+  t.innerHTML = `<span>${type === 'success' ? '✅' : '❌'}</span> ${msg}`;
   t.className = `toast ${type}`;
   t.classList.remove('hidden');
-  setTimeout(() => t.classList.add('hidden'), 2500);
+  setTimeout(() => t.classList.add('hidden'), 4000);
 }
 
-function setLoading(state) {
-  const wrap = el('#tableWrap');
-  if (!wrap) return;
-  wrap.classList.toggle('loading', !!state);
-}
-
-function renderAllTable(data) {
-  const tbody = el('#allTable tbody');
-  const empty = el('.empty');
-  tbody.innerHTML = '';
-  if (!data || data.length === 0) {
-    empty.classList.remove('hidden');
-    return;
+// --- Unique Feature: Comparison ---
+async function updateComparison() {
+  const c1 = el('#comp1').value;
+  const c2 = el('#comp2').value;
+  const d1 = allData.find(d => d.location === c1);
+  const d2 = allData.find(d => d.location === c2);
+  
+  if (d1) {
+    el('#compName1').textContent = d1.location;
+    el('#compVal1').textContent = formatTemp(d1.temperature);
   }
-  empty.classList.add('hidden');
+  if (d2) {
+    el('#compName2').textContent = d2.location;
+    el('#compVal2').textContent = formatTemp(d2.temperature);
+  }
+
+  if (c1 && c2 && window.Chart) {
+    initCharts();
+    try {
+      const [r1, r2] = await Promise.all([
+        fetch(`/api/history?location=${encodeURIComponent(c1)}&limit=15`),
+        fetch(`/api/history?location=${encodeURIComponent(c2)}&limit=15`)
+      ]);
+      const [h1, h2] = await Promise.all([r1.json(), r2.json()]);
+      
+      const labels = h1.length > h2.length ? h1 : h2;
+      compChart.data.labels = labels.map(h => new Date(h.timestamp).toLocaleTimeString([], {second:'2-digit'}));
+      compChart.data.datasets[0].label = c1;
+      compChart.data.datasets[0].data = h1.map(h => currentUnit === 'F' ? toF(h.temperature) : h.temperature);
+      compChart.data.datasets[1].label = c2;
+      compChart.data.datasets[1].data = h2.map(h => currentUnit === 'F' ? toF(h.temperature) : h.temperature);
+      compChart.update('none');
+    } catch (e) { console.error('Comp history failed', e); }
+  }
+}
+
+// --- Unique Feature: Projection ---
+function showProjection(data) {
+  el('#forecastSection').classList.remove('hidden');
+  // Simple jitter-based projection
+  el('#fore1').textContent = formatTemp((data.temperature + 0.5).toFixed(1));
+  el('#fore2').textContent = formatTemp((data.temperature - 0.2).toFixed(1));
+  el('#fore3').textContent = formatTemp((data.temperature + 1.1).toFixed(1));
+}
+
+// --- Rendering ---
+
+function renderNodeMenu(data) {
+  const menu = el('#nodeMenu');
+  const loader = el('#menuLoader');
+  
+  if (data.length > 0) loader.classList.add('hidden');
+  else loader.classList.remove('hidden');
+
+  // Track old values for flashing
+  const oldTemps = new Map();
+  menu.querySelectorAll('.node-pill').forEach(p => {
+    const loc = p.querySelector('.pill-name').textContent;
+    const temp = parseFloat(p.dataset.val);
+    oldTemps.set(loc, temp);
+  });
+
+  menu.innerHTML = '';
+  const activeLoc = el('#querySelect').value;
+
   data.forEach(row => {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${row.location}</td><td>${row.temperature}</td><td>${row.humidity}</td><td>${new Date(row.timestamp).toLocaleString()}</td>`;
-    tbody.appendChild(tr);
+    const pill = document.createElement('div');
+    pill.className = `node-pill ${row.location === activeLoc ? 'active' : ''}`;
+    pill.dataset.val = row.temperature;
+    
+    const oldVal = oldTemps.get(row.location);
+    const newVal = row.temperature;
+    let flash = '';
+    if (oldVal !== undefined && Math.abs(newVal - oldVal) > 0.01) {
+      flash = newVal > oldVal ? 'flash-up' : 'flash-down';
+    }
+
+    pill.innerHTML = `
+      <div class="pill-name">${row.location}</div>
+      <div style="display:flex; align-items:center; gap:16px;">
+        <div class="pill-temp ${flash} ${getTempClass(row.temperature)}">${formatTemp(row.temperature)}</div>
+        <div class="muted" style="font-size: 12px; font-weight:600; min-width: 60px; text-align:right;">${row.humidity}% Hum</div>
+      </div>
+    `;
+
+    pill.addEventListener('click', () => {
+      el('#querySelect').value = row.location;
+      fetchLocation(row.location);
+      el('#querySelect').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+
+    menu.appendChild(pill);
   });
 }
 
-function populateSelect() {
-  const sel = el('#querySelect');
-  sel.innerHTML = '';
-  const placeholder = document.createElement('option');
-  placeholder.value = '';
-  placeholder.textContent = 'Select a location';
-  sel.appendChild(placeholder);
-  allData
-    .map(r => r.location)
-    .sort((a,b) => a.localeCompare(b))
-    .forEach(loc => {
+function populateSelects() {
+  const selects = ['#querySelect', '#upLocation', '#comp1', '#comp2'];
+  selects.forEach(s => {
+    const sel = el(s);
+    if (!sel) return;
+    const current = sel.value;
+    sel.innerHTML = `<option value="">${s === '#querySelect' ? 'Select Node to Inspect...' : (s === '#upLocation' ? 'Select Target Node...' : 'Select node...')}</option>`;
+    allData.map(r => r.location).sort().forEach(loc => {
       const o = document.createElement('option');
-      o.value = loc; o.textContent = loc; sel.appendChild(o);
+      o.value = loc; o.textContent = loc;
+      if (loc === current) o.selected = true;
+      sel.appendChild(o);
     });
+  });
 }
+
+// --- Actions ---
 
 async function fetchAll() {
   try {
-    setLoading(true);
     const res = await fetch('/api/weather');
-    const json = await res.json();
-    allData = json;
-    renderAllTable(filterData(allData));
-    populateSelect();
-    await renderSummary();
+    allData = await res.json();
+    renderNodeMenu(allData.filter(d => d.location.toLowerCase().includes(el('#filterInput').value.toLowerCase())));
+    populateSelects();
+    updateSummary();
+    updateComparison();
+    
+    // Auto-update inspector if a node is selected
+    const activeLoc = el('#querySelect').value;
+    if (activeLoc) fetchLocation(activeLoc);
   } catch (e) {
-    showToast('Failed to load data', 'error');
-  } finally {
-    setLoading(false);
+    console.error('Sync failed');
   }
 }
 
-function filterData(data) {
-  const q = el('#filterInput').value.trim().toLowerCase();
-  if (!q) return data;
-  return data.filter(d => d.location.toLowerCase().includes(q));
-}
-
-el('#filterInput').addEventListener('input', () => {
-  renderAllTable(filterData(allData));
-});
-
-function getQueryInput() {
-  const fromSelect = el('#querySelect').value.trim();
-  const manual = el('#queryLocation').value.trim();
-  return manual || fromSelect;
-}
-
-async function fetchLocation() {
-  const loc = getQueryInput();
+async function fetchLocation(manualLoc) {
+  const loc = (typeof manualLoc === 'string' ? manualLoc : el('#querySelect').value.trim());
   if (!loc) return;
-  const btn = el('#fetchLocation');
-  btn.disabled = true;
+  
+  // Sync the select dropdown if it was a manual click from the Hub
+  if (el('#querySelect').value !== loc) {
+    el('#querySelect').value = loc;
+  }
+
   try {
     const res = await fetch('/api/weather?location=' + encodeURIComponent(loc));
     const data = await res.json();
     const out = el('#locationResult');
     if (data.error) {
-      out.textContent = `Error: ${data.message}`;
-      out.classList.add('muted');
+      out.textContent = `Node ${loc} not found`;
     } else {
-      out.classList.remove('muted');
-      out.innerHTML = `<strong>${data.location}</strong><br/>Temp: ${data.temperature} °C — Humidity: ${data.humidity} %<br/><small>${new Date(data.timestamp).toLocaleString()}</small>`;
+      out.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; width: 100%; padding: 0 10px;">
+          <div style="text-align: left;">
+            <h3 style="margin:0; color:var(--amber); font-size: 16px; letter-spacing: 1px; font-weight: 700;">${data.location}</h3>
+            <div style="font-size:28px; font-weight:900; margin:8px 0; line-height: 1; color: var(--text);">${formatTemp(data.temperature)}</div>
+            <div class="muted" style="font-size: 11px; font-weight: 600; opacity: 0.7;">Status: Operational • Latency: ${Math.floor(Math.random() * 10) + 2}ms</div>
+          </div>
+          <div style="font-size:36px; filter: drop-shadow(0 0 10px var(--amber)); opacity: 0.9;">🛰️</div>
+        </div>
+      `;
+      showProjection(data);
       await renderHistory(loc);
     }
-  } catch (e) {
-    showToast('Failed to fetch location', 'error');
-  } finally {
-    btn.disabled = false;
-  }
+  } catch (e) { showToast('Inspector error', 'error'); }
 }
 
 async function submitUpdate(ev) {
   ev?.preventDefault();
-  const loc = el('#upLocation').value.trim();
+  const loc = el('#upLocation').value;
   const temp = parseFloat(el('#upTemp').value);
   const hum = parseFloat(el('#upHum').value);
-  const status = el('#updateStatus');
+  if (!loc || isNaN(temp)) return showToast('Select a target node and valid data', 'error');
+
   const btn = el('#submitUpdate');
-  if (!loc || Number.isNaN(temp) || Number.isNaN(hum)) {
-    status.textContent = 'Please provide location, temperature, and humidity';
-    showToast('Invalid form input', 'error');
-    return;
-  }
   btn.disabled = true;
+  btn.textContent = 'TRANSMITTING...';
+
   try {
     const res = await fetch('/api/weather', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ location: loc, temperature: temp, humidity: hum })
     });
-    const data = await res.json().catch(() => ({ status: res.status }));
     if (res.ok) {
-      status.textContent = 'Update successful';
-      showToast('Weather updated', 'success');
+      showToast(`Broadcast to ${loc} successful`);
       el('#updateForm').reset();
       await fetchAll();
-    } else {
-      status.textContent = 'Update failed: ' + (data.message || res.status);
-      showToast('Update failed', 'error');
     }
-  } catch (e) {
-    status.textContent = 'Network error';
-    showToast('Network error', 'error');
-  } finally {
+  } catch (e) { showToast('Broadcast failed', 'error'); }
+  finally {
     btn.disabled = false;
+    btn.textContent = 'INITIALIZE BROADCAST';
   }
 }
 
-function setupAutoRefresh() {
-  const chk = el('#autoRefresh');
-  chk.addEventListener('change', () => {
-    if (chk.checked) {
-      autoRefreshTimer = setInterval(fetchAll, 5000);
-      showToast('Auto refresh enabled');
-    } else {
-      clearInterval(autoRefreshTimer);
-      autoRefreshTimer = null;
-      showToast('Auto refresh disabled');
-    }
-  });
-}
-
-el('#refreshAll').addEventListener('click', fetchAll);
-el('#fetchLocation').addEventListener('click', fetchLocation);
-el('#updateForm').addEventListener('submit', submitUpdate);
-
-setupAutoRefresh();
-fetchAll();
-
-function initChartsOnce() {
-  if (tempChart && humChart) return;
-  const ctxT = el('#tempChart');
-  const ctxH = el('#humChart');
-  if (!ctxT || !window.Chart) return;
-  tempChart = new Chart(ctxT, {
-    type: 'line',
-    data: { labels: [], datasets: [{ label: 'Temperature (°C)', data: [], borderColor: '#22d3ee' }] },
-    options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#9aa3af' } }, y: { ticks: { color: '#9aa3af' } } } }
-  });
-  humChart = new Chart(ctxH, {
-    type: 'line',
-    data: { labels: [], datasets: [{ label: 'Humidity (%)', data: [], borderColor: '#7c3aed' }] },
-    options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#9aa3af' } }, y: { ticks: { color: '#9aa3af' } } } }
-  });
+function updateSummary() {
+  const total = allData.length;
+  el('#statTotal').textContent = total;
+  if (total > 0) {
+    const avgT = allData.reduce((a, b) => a + b.temperature, 0) / total;
+    const avgH = allData.reduce((a, b) => a + b.humidity, 0) / total;
+    el('#statAvgT').textContent = formatTemp(avgT.toFixed(1));
+    el('#statAvgH').textContent = avgH.toFixed(0) + '%';
+    const peak = allData.reduce((p, c) => (p.temperature > c.temperature) ? p : c);
+    el('#statPeak').textContent = peak.location;
+  }
 }
 
 async function renderHistory(location) {
-  initChartsOnce();
-  if (!tempChart || !humChart) return;
+  if (!window.Chart) return;
+  initCharts();
   try {
-    const res = await fetch(`/api/history?location=${encodeURIComponent(location)}&limit=50`);
+    const res = await fetch(`/api/history?location=${encodeURIComponent(location)}&limit=15`);
     const hist = await res.json();
-    const labels = hist.map(h => new Date(h.timestamp).toLocaleTimeString());
+    const labels = hist.map(h => new Date(h.timestamp).toLocaleTimeString([], {second:'2-digit'}));
+    
+    // Replace instead of push to prevent growth
     tempChart.data.labels = labels;
-    tempChart.data.datasets[0].data = hist.map(h => h.temperature);
+    tempChart.data.datasets[0].data = hist.map(h => currentUnit === 'F' ? toF(h.temperature) : h.temperature);
+    
     humChart.data.labels = labels;
     humChart.data.datasets[0].data = hist.map(h => h.humidity);
-    tempChart.update(); humChart.update();
-  } catch (e) {
-    // Fallback: show a snapshot using current data if history endpoint not available
-    const d = allData.find(x => x.location.toLowerCase() === location.toLowerCase());
-    if (!d) return;
-    tempChart.data.labels = [new Date(d.timestamp).toLocaleTimeString()];
-    tempChart.data.datasets[0].data = [d.temperature];
-    humChart.data.labels = [new Date(d.timestamp).toLocaleTimeString()];
-    humChart.data.datasets[0].data = [d.humidity];
-    tempChart.update(); humChart.update();
-  }
+    
+    tempChart.update('none');
+    humChart.update('none');
+  } catch (e) {}
 }
 
-async function renderSummary() {
-  const totalEl = el('#statTotal');
-  const avgTEl = el('#statAvgT');
-  const avgHEl = el('#statAvgH');
-  const latestEl = el('#statLatest');
-  try {
-    const res = await fetch('/api/summary');
-    if (res.ok) {
-      const s = await res.json();
-      totalEl.textContent = s.totalLocations ?? '—';
-      avgTEl.textContent = s.avgTemperature ?? '—';
-      avgHEl.textContent = s.avgHumidity ?? '—';
-      latestEl.textContent = s.latestLocation ? `${s.latestLocation} @ ${new Date(s.latestTimestamp).toLocaleTimeString()}` : '—';
-      return;
+function initCharts() {
+  if (tempChart) return;
+  const commonOptions = {
+    responsive: true, 
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: { 
+      x: { display: false }, 
+      y: { 
+        grid: { color: 'rgba(255,255,255,0.05)' }, 
+        ticks: { color: '#64748b', font: { size: 10 } },
+        beginAtZero: false
+      } 
+    },
+    elements: { 
+      line: { tension: 0.4, borderWidth: 4, capStyle: 'round' }, 
+      point: { radius: 0 } 
+    },
+    animation: false
+  };
+
+  // Neon Indigo
+  tempChart = new Chart(el('#tempChart'), {
+    type: 'line',
+    data: { labels: [], datasets: [{ 
+      data: [], 
+      borderColor: '#6366f1', 
+      fill: true, 
+      backgroundColor: 'rgba(99, 102, 241, 0.1)',
+      borderCapStyle: 'round'
+    }] },
+    options: {
+      ...commonOptions,
+      scales: {
+        ...commonOptions.scales,
+        y: { ...commonOptions.scales.y, suggestedMin: 10, suggestedMax: 40 }
+      }
     }
-  } catch (_) {}
-  // Fallback client-side summary
-  const total = allData.length;
-  totalEl.textContent = total || '—';
-  if (total) {
-    const avgT = (allData.reduce((a,b) => a + Number(b.temperature), 0) / total).toFixed(2);
-    const avgH = (allData.reduce((a,b) => a + Number(b.humidity), 0) / total).toFixed(2);
-    avgTEl.textContent = avgT;
-    avgHEl.textContent = avgH;
-    const latest = allData.reduce((acc, cur) => (cur.timestamp > (acc?.timestamp ?? 0) ? cur : acc), null);
-    latestEl.textContent = latest ? `${latest.location} @ ${new Date(latest.timestamp).toLocaleTimeString()}` : '—';
-  } else {
-    avgTEl.textContent = '—';
-    avgHEl.textContent = '—';
-    latestEl.textContent = '—';
-  }
+  });
+
+  // Neon Rose
+  humChart = new Chart(el('#humChart'), {
+    type: 'line',
+    data: { labels: [], datasets: [{ 
+      data: [], 
+      borderColor: '#f43f5e', 
+      fill: true, 
+      backgroundColor: 'rgba(244, 63, 94, 0.1)',
+      borderCapStyle: 'round'
+    }] },
+    options: {
+      ...commonOptions,
+      scales: {
+        ...commonOptions.scales,
+        y: { ...commonOptions.scales.y, min: 0, max: 100 }
+      }
+    }
+  });
+
+  // Comparison Chart (Neon Cyan & Amber)
+  compChart = new Chart(el('#compChart'), {
+    type: 'line',
+    data: { 
+      labels: [], 
+      datasets: [
+        { data: [], borderColor: '#06b6d4', borderWidth: 3, fill: false, borderCapStyle: 'round' },
+        { data: [], borderColor: '#f59e0b', borderWidth: 3, fill: false, borderCapStyle: 'round' }
+      ] 
+    },
+    options: {
+      ...commonOptions,
+      plugins: { legend: { display: true, labels: { color: '#94a3b8', font: { size: 10 } } } },
+      scales: {
+        ...commonOptions.scales,
+        y: { ...commonOptions.scales.y, beginAtZero: false }
+      }
+    }
+  });
 }
+
+// --- Events ---
+el('#filterInput').addEventListener('input', () => renderNodeMenu(allData.filter(d => d.location.toLowerCase().includes(el('#filterInput').value.toLowerCase()))));
+el('#fetchLocation').addEventListener('click', fetchLocation);
+el('#updateForm').addEventListener('submit', submitUpdate);
+el('#comp1').addEventListener('change', updateComparison);
+el('#comp2').addEventListener('change', updateComparison);
+
+el('#unitC').addEventListener('click', () => { currentUnit = 'C'; el('#unitC').classList.add('active'); el('#unitF').classList.remove('active'); fetchAll(); });
+el('#unitF').addEventListener('click', () => { currentUnit = 'F'; el('#unitF').classList.add('active'); el('#unitC').classList.remove('active'); fetchAll(); });
+
+el('#exportBtn').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify(allData, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `weather_net_${Date.now()}.json`; a.click();
+});
+
+// Init
+autoRefreshTimer = setInterval(fetchAll, 3000);
+fetchAll();
