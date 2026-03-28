@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WeatherRMI • Dashboard</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="icon" href="data:," />
+  <meta name="description" content="Professional Weather Information Service powered by Java RMI and JSON" />
+</head>
+<body>
+  <header class="appbar">
+    <div class="container appbar-inner">
+      <div class="brand">
+        <div class="logo">☁️</div>
+        <div>
+          <h1>Weather Information Service</h1>
+          <p>Java RMI backend • JSON API • Web UI</p>
+        </div>
+      </div>
+      <div class="toolbar">
+        <label class="switch"><input type="checkbox" id="autoRefresh"/><span>Auto refresh</span></label>
+        <button id="refreshAll" class="secondary">Refresh</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="panel">
+      <div class="panel-header">
+        <h2>All Locations</h2>
+        <div class="row">
+          <input id="filterInput" class="grow" placeholder="Filter by location" />
+        </div>
+      </div>
+      <div id="tableWrap" class="table-wrap loading">
+        <table id="allTable">
+          <thead>
+            <tr><th>Location</th><th>Temperature (°C)</th><th>Humidity (%)</th><th>Updated</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div class="loader">Loading data…</div>
+        <div class="empty hidden">No data available</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>Query Location</h2>
+      </div>
+      <div class="row">
+        <select id="querySelect" class="grow"></select>
+        <input id="queryLocation" placeholder="or type a location" />
+        <button id="fetchLocation">Fetch</button>
+      </div>
+      <div id="locationResult" class="card muted">Select a location to view details.</div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>Analytics</h2>
+      </div>
+      <div class="stats">
+        <div class="card stat">
+          <div class="label">Total Locations</div>
+          <div id="statTotal" class="value">—</div>
+        </div>
+        <div class="card stat">
+          <div class="label">Avg Temperature (°C)</div>
+          <div id="statAvgT" class="value">—</div>
+        </div>
+        <div class="card stat">
+          <div class="label">Avg Humidity (%)</div>
+          <div id="statAvgH" class="value">—</div>
+        </div>
+        <div class="card stat">
+          <div class="label">Latest Update</div>
+          <div id="statLatest" class="value">—</div>
+        </div>
+      </div>
+      <div class="charts">
+        <div class="chart">
+          <h3>Temperature Trend</h3>
+          <canvas id="tempChart" height="130"></canvas>
+        </div>
+        <div class="chart">
+          <h3>Humidity Trend</h3>
+          <canvas id="humChart" height="130"></canvas>
+        </div>
+      </div>
+      <small class="muted">Charts show history for selected location where available.</small>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>Add / Update Weather</h2>
+      </div>
+      <form id="updateForm" class="grid" novalidate>
+        <input id="upLocation" placeholder="Location" required />
+        <input id="upTemp" type="number" step="0.1" placeholder="Temperature (°C)" required />
+        <input id="upHum" type="number" step="0.1" placeholder="Humidity (%)" required />
+        <button id="submitUpdate" type="submit">Submit</button>
+      </form>
+      <div id="updateStatus" class="status"></div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">
+      <small>WeatherRMI • Professional UI • v1.0</small>
+    </div>
+  </footer>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="/script.js"></script>
+</body>
+</html>
